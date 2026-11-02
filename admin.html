@@ -9,7 +9,7 @@
   body { font-family: 'Segoe UI', sans-serif; max-width: 1000px; margin: 20px auto; padding: 0 15px; color: #333; }
   h1 { margin-bottom: 4px; } h2 { border-bottom: 2px solid #1a73e8; padding-bottom: 4px; margin-top: 35px; }
   textarea, select, input { font: inherit; padding: 8px; border: 1px solid #ccc; border-radius: 6px; }
-  textarea { width: 100%; box-sizing: border-box; height: 110px; }
+  textarea { width: 100%; box-sizing: border-box; height: 100px; }
   button { padding: 8px 16px; border: none; border-radius: 6px; background: #1a73e8; color: #fff; cursor: pointer; font-weight: bold; }
   button.rouge { background: #d93025; } button.gris { background: #777; }
   table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: .9em; }
@@ -22,28 +22,41 @@
 <h1>🔧 Administration – Géotrouveur</h1>
 
 <div id="vue-login">
-  <p>Connexion réservée à l'administrateur.</p>
+  <p>Connexion réservée aux enseignants autorisés.</p>
   <button id="btn-login">Se connecter avec Google</button>
   <p id="msg-login" class="err"></p>
 </div>
 
+<div id="vue-refus" class="cache">
+  <p class="err"><b>Accès non autorisé.</b> L'adresse <b id="refus-mail"></b> n'est pas inscrite comme enseignant·e. Contactez l'administrateur.</p>
+  <button class="gris" id="btn-logout2">Déconnexion</button>
+</div>
+
 <div id="vue-admin" class="cache">
-  <p>Connecté : <b id="admin-mail"></b> <button class="gris" id="btn-logout">Déconnexion</button></p>
+  <p>Connecté : <b id="admin-mail"></b> (<span id="role"></span>) <button class="gris" id="btn-logout">Déconnexion</button></p>
+
+  <div id="bloc-enseignants" class="cache">
+    <h2>0. Enseignants autorisés</h2>
+    <div class="info">Une ligne par enseignant·e : <code>adresse Google;Nom;École</code><br>
+      Exemple : <code>prenom.nom@ecole-x.ch;M. Dupont;Tramelan</code>. L'enseignant pourra gérer uniquement les classes qu'il crée.</div>
+    <textarea id="txt-ens"></textarea>
+    <p><button id="btn-ajout-ens">Ajouter</button> <button class="gris" id="btn-liste-ens">Actualiser la liste</button></p>
+    <table><thead><tr><th>Adresse</th><th>Nom</th><th>École</th><th></th></tr></thead><tbody id="corps-ens"></tbody></table>
+  </div>
 
   <h2>1. Créer des codes de classe</h2>
-  <div class="info">Une ligne par classe : <code>École;Classe;Enseignant (facultatif)</code><br>
-    Exemple : <code>Tramelan;9A;M. Dupont</code>. Un code du type <b>TRAM-9A-K7X</b> est généré automatiquement.</div>
-  <textarea id="txt-classes" placeholder="Tramelan;9A;M. Dupont&#10;Tramelan;9B"></textarea>
+  <div class="info" id="aide-classes"></div>
+  <textarea id="txt-classes"></textarea>
   <p><button id="btn-creer">Créer les codes</button> <button class="gris" id="btn-csv">Copier le résultat</button></p>
   <div id="res-creation"></div>
 
-  <h2>2. Classes existantes</h2>
+  <h2>2. Mes classes</h2>
   <p><button class="gris" id="btn-liste-classes">Actualiser</button></p>
   <table><thead><tr><th>Code</th><th>École</th><th>Classe</th><th>Enseignant</th><th>Active</th><th></th></tr></thead><tbody id="corps-classes"></tbody></table>
 
   <h2>3. Joueurs et modération</h2>
   <p>Semestre : <select id="sel-sem"></select> <button id="btn-joueurs">Afficher</button>
-     <button class="rouge" id="btn-reset-sem">Supprimer TOUT ce semestre</button></p>
+     <button class="rouge cache" id="btn-reset-sem">Supprimer TOUT ce semestre</button></p>
   <div id="info-joueurs"></div>
   <table><thead><tr><th>Pseudo</th><th>École</th><th>Classe</th><th>Points</th><th>Lieux</th><th></th></tr></thead><tbody id="corps-joueurs"></tbody></table>
 </div>
@@ -51,21 +64,62 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, getDocs, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { firebaseConfig, semestreCourant } from "./config.js";
+import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, query, where, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { firebaseConfig, semestreCourant, ADMIN_EMAIL } from "./config.js";
 
 const app = initializeApp(firebaseConfig), auth = getAuth(app), db = getFirestore(app);
 const $ = id => document.getElementById(id);
 const esc = s => { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; };
+let SUPER = false, MAIL = '', PROFIL = null, mesClasses = [];
 
 $('btn-login').onclick = async () => { try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { $('msg-login').textContent = e.message; } };
-$('btn-logout').onclick = () => signOut(auth);
-onAuthStateChanged(auth, u => {
-  const admin = u && !u.isAnonymous;
-  $('vue-login').classList.toggle('cache', !!admin);
-  $('vue-admin').classList.toggle('cache', !admin);
-  if (admin) { $('admin-mail').textContent = u.email; remplirSemestres(); listerClasses(); }
+$('btn-logout').onclick = $('btn-logout2').onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, async u => {
+  const vues = ['vue-login', 'vue-refus', 'vue-admin'];
+  vues.forEach(v => $(v).classList.add('cache'));
+  if (!u || u.isAnonymous) { $('vue-login').classList.remove('cache'); return; }
+  MAIL = (u.email || '').toLowerCase();
+  SUPER = MAIL === ADMIN_EMAIL.toLowerCase();
+  PROFIL = null;
+  if (!SUPER) {
+    try { const s = await getDoc(doc(db, 'enseignants', MAIL)); if (s.exists()) PROFIL = s.data(); } catch (e) { console.error(e); }
+    if (!PROFIL) { $('refus-mail').textContent = MAIL; $('vue-refus').classList.remove('cache'); return; }
+  }
+  $('admin-mail').textContent = MAIL;
+  $('role').textContent = SUPER ? 'super-administrateur' : 'enseignant·e – ' + PROFIL.ecole;
+  $('bloc-enseignants').classList.toggle('cache', !SUPER);
+  $('btn-reset-sem').classList.toggle('cache', !SUPER);
+  $('aide-classes').innerHTML = SUPER
+    ? "Une ligne par classe : <code>École;Classe;Enseignant;Adresse de l'enseignant (facultatif)</code><br>Exemple : <code>Tramelan;9A;M. Dupont;prenom.nom@ecole.ch</code>. Renseignez l'adresse pour que l'enseignant puisse gérer cette classe."
+    : "Une ligne par classe (ex. <code>9A</code>). Un code du type <b>" + (PROFIL.ecole || 'ECOL').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4) + "-9A-K7X</b> est généré pour chaque classe.";
+  $('txt-classes').placeholder = SUPER ? "Tramelan;9A;M. Dupont;prenom.nom@ecole.ch" : "9A\n9B";
+  $('vue-admin').classList.remove('cache');
+  remplirSemestres(); listerClasses(); if (SUPER) listerEns();
 });
+
+/* ---- Enseignants (super-administrateur) ---- */
+$('btn-ajout-ens').onclick = async () => {
+  const lignes = $('txt-ens').value.split('\n').map(l => l.trim()).filter(Boolean);
+  for (const l of lignes) {
+    const [mail, nom, ecole] = l.split(';').map(x => (x || '').trim());
+    if (!mail || !mail.includes('@') || !ecole) { alert('Ligne ignorée : ' + l); continue; }
+    await setDoc(doc(db, 'enseignants', mail.toLowerCase()), { nom: nom || '', ecole });
+  }
+  $('txt-ens').value = ''; listerEns();
+};
+async function listerEns() {
+  const snap = await getDocs(collection(db, 'enseignants'));
+  const corps = $('corps-ens'); corps.innerHTML = '';
+  snap.docs.forEach(d => {
+    const e = d.data(); const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(d.id)}</td><td>${esc(e.nom)}</td><td>${esc(e.ecole)}</td><td></td>`;
+    const b = document.createElement('button'); b.className = 'rouge'; b.textContent = 'Retirer';
+    b.onclick = async () => { if (confirm('Retirer ' + d.id + ' ? (ses classes restent en place)')) { await deleteDoc(doc(db, 'enseignants', d.id)); listerEns(); } };
+    tr.lastChild.appendChild(b); corps.appendChild(tr);
+  });
+}
+$('btn-liste-ens').onclick = listerEns;
 
 /* ---- Classes ---- */
 const sans = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -75,13 +129,18 @@ let dernierCsv = '';
 
 $('btn-creer').onclick = async () => {
   const lignes = $('txt-classes').value.split('\n').map(l => l.trim()).filter(Boolean);
-  const sortie = [['Code','École','Classe','Enseignant']];
+  const sortie = [['Code', 'École', 'Classe', 'Enseignant']];
   for (const l of lignes) {
-    const [ecole, classe, ens] = l.split(';').map(x => (x || '').trim());
+    let ecole, classe, ens, proprio;
+    if (SUPER) {
+      const p = l.split(';').map(x => (x || '').trim()); [ecole, classe, ens] = p; proprio = (p[3] || '').toLowerCase();
+    } else { classe = l.split(';')[0].trim(); ecole = PROFIL.ecole; ens = PROFIL.nom; proprio = MAIL; }
     if (!ecole || !classe) { alert('Ligne ignorée : ' + l); continue; }
     const code = `${sans(ecole).slice(0, 4)}-${sans(classe)}-${suffixe()}`;
-    await setDoc(doc(db, 'classes', code), { ecole, classe, enseignant: ens || '', actif: true, cree: serverTimestamp() });
-    sortie.push([code, ecole, classe, ens || '']);
+    const data = { ecole, classe, enseignant: ens || '', actif: true, cree: serverTimestamp() };
+    if (proprio) data.proprio = proprio;
+    try { await setDoc(doc(db, 'classes', code), data); sortie.push([code, ecole, classe, ens || '']); }
+    catch (e) { alert('Création refusée pour : ' + l + '\n' + e.message); }
   }
   dernierCsv = sortie.map(r => r.join(';')).join('\n');
   $('res-creation').innerHTML = '<table>' + sortie.map((r, i) => '<tr>' + r.map(c => (i ? '<td>' : '<th>') + esc(c)).join('') + '</tr>').join('') + '</table>';
@@ -90,50 +149,76 @@ $('btn-creer').onclick = async () => {
 $('btn-csv').onclick = () => navigator.clipboard.writeText(dernierCsv);
 
 async function listerClasses() {
-  const snap = await getDocs(collection(db, 'classes'));
+  const ref = collection(db, 'classes');
+  const snap = await getDocs(SUPER ? ref : query(ref, where('proprio', '==', MAIL)));
+  mesClasses = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.id.localeCompare(b.id));
   const corps = $('corps-classes'); corps.innerHTML = '';
-  snap.docs.sort((a, b) => a.id.localeCompare(b.id)).forEach(d => {
-    const c = d.data(); const tr = document.createElement('tr');
-    tr.innerHTML = `<td><b>${esc(d.id)}</b></td><td>${esc(c.ecole)}</td><td>${esc(c.classe)}</td><td>${esc(c.enseignant)}</td><td>${c.actif ? '✅' : '⛔'}</td><td></td>`;
+  mesClasses.forEach(c => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><b>${esc(c.id)}</b></td><td>${esc(c.ecole)}</td><td>${esc(c.classe)}</td><td>${esc(c.enseignant)}</td><td>${c.actif ? '✅' : '⛔'}</td><td></td>`;
     const b1 = document.createElement('button'); b1.className = 'gris'; b1.textContent = c.actif ? 'Désactiver' : 'Activer';
-    b1.onclick = async () => { await updateDoc(doc(db, 'classes', d.id), { actif: !c.actif }); listerClasses(); };
+    b1.onclick = async () => { await updateDoc(doc(db, 'classes', c.id), { actif: !c.actif }); listerClasses(); };
     const b2 = document.createElement('button'); b2.className = 'rouge'; b2.textContent = 'Supprimer'; b2.style.marginLeft = '6px';
-    b2.onclick = async () => { if (confirm('Supprimer le code ' + d.id + ' ?')) { await deleteDoc(doc(db, 'classes', d.id)); listerClasses(); } };
+    b2.onclick = () => supprimerClasse(c);
     tr.lastChild.append(b1, b2); corps.appendChild(tr);
   });
 }
 $('btn-liste-classes').onclick = listerClasses;
 
-/* ---- Joueurs ---- */
-function remplirSemestres() {
-  const sel = $('sel-sem'); sel.innerHTML = '';
-  let [y, s] = semestreCourant().split('-S').map(Number);
-  for (let i = 0; i < 6; i++) {
-    const o = document.createElement('option'); o.value = `${y}-S${s}`; o.textContent = o.value + (i === 0 ? ' (en cours)' : ''); sel.appendChild(o);
-    if (s === 1) { s = 2; } else { s = 1; y -= 1; }   // S2 (fév.-juil. N) précède S1 (août N - janv. N+1)
+async function supprimerDocs(refs) {
+  const taille = SUPER ? 400 : 15;   // limite des lectures de règles pour les enseignants
+  for (let i = 0; i < refs.length; i += taille) {
+    const b = writeBatch(db); refs.slice(i, i + taille).forEach(r => b.delete(r)); await b.commit();
   }
 }
+async function supprimerClasse(c) {
+  if (!confirm(`Supprimer la classe ${c.id} ET tous ses élèves (semestres récents) ?`)) return;
+  try {
+    for (const sem of listeSemestres()) {
+      const snap = await getDocs(query(collection(db, 'semestres', sem, 'joueurs'), where('classe', '==', c.id)));
+      await supprimerDocs(snap.docs.map(d => d.ref));
+    }
+    await deleteDoc(doc(db, 'classes', c.id));
+  } catch (e) { alert('Suppression impossible : ' + e.message); }
+  listerClasses();
+}
+
+/* ---- Joueurs ---- */
+function listeSemestres() {
+  const res = []; let [y, s] = semestreCourant().split('-S').map(Number);
+  for (let i = 0; i < 6; i++) { res.push(`${y}-S${s}`); if (s === 1) s = 2; else { s = 1; y -= 1; } }
+  return res;
+}
+function remplirSemestres() {
+  const sel = $('sel-sem'); sel.innerHTML = '';
+  listeSemestres().forEach((v, i) => { const o = document.createElement('option'); o.value = v; o.textContent = v + (i === 0 ? ' (en cours)' : ''); sel.appendChild(o); });
+}
 async function afficherJoueurs() {
-  const sem = $('sel-sem').value;
-  const snap = await getDocs(collection(db, 'semestres', sem, 'joueurs'));
-  $('info-joueurs').textContent = snap.size + ' joueur(s) pour ' + sem;
+  const sem = $('sel-sem').value, base = collection(db, 'semestres', sem, 'joueurs');
+  let docs = [];
+  if (SUPER) docs = (await getDocs(base)).docs;
+  else for (const c of mesClasses) docs.push(...(await getDocs(query(base, where('classe', '==', c.id)))).docs);
+  $('info-joueurs').textContent = docs.length + ' joueur(s) pour ' + sem;
   const corps = $('corps-joueurs'); corps.innerHTML = '';
-  snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.total - a.total).forEach(j => {
+  docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.total - a.total).forEach(j => {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${esc(j.pseudo)}</td><td>${esc(j.ecole)}</td><td>${esc(j.classe)}</td><td>${j.total}</td><td>${j.n}</td><td></td>`;
     const b = document.createElement('button'); b.className = 'rouge'; b.textContent = 'Supprimer';
-    b.onclick = async () => { if (confirm('Supprimer le joueur « ' + j.pseudo + ' » ?')) { await deleteDoc(doc(db, 'semestres', sem, 'joueurs', j.id)); afficherJoueurs(); } };
+    b.onclick = async () => {
+      if (!confirm('Supprimer le joueur « ' + j.pseudo + ' » ?')) return;
+      try { await deleteDoc(doc(db, 'semestres', sem, 'joueurs', j.id)); } catch (e) { alert('Suppression refusée : ' + e.message); }
+      afficherJoueurs();
+    };
     tr.lastChild.appendChild(b); corps.appendChild(tr);
   });
 }
 $('btn-joueurs').onclick = afficherJoueurs;
 $('btn-reset-sem').onclick = async () => {
+  if (!SUPER) return;
   const sem = $('sel-sem').value;
   if (prompt(`Cette action efface définitivement tous les joueurs et scores de ${sem}.\nTape SUPPRIMER pour confirmer.`) !== 'SUPPRIMER') return;
   const snap = await getDocs(collection(db, 'semestres', sem, 'joueurs'));
-  for (let i = 0; i < snap.docs.length; i += 400) {
-    const b = writeBatch(db); snap.docs.slice(i, i + 400).forEach(d => b.delete(d.ref)); await b.commit();
-  }
+  await supprimerDocs(snap.docs.map(d => d.ref));
   afficherJoueurs();
 };
 </script>
