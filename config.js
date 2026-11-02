@@ -11,7 +11,7 @@ export const firebaseConfig = {
 
 // Clé Google Maps (Street View). À REMPLACER par une NOUVELLE clé restreinte
 // au référent https://davidvuilleumier-estra.github.io/* et à l'API "Maps JavaScript".
-export const GOOGLE_MAPS_KEY = "AIzaSyDmTtMX_oK6Sj0Xm9Eg4_8Ds3p5x_pRKx0";
+export const GOOGLE_MAPS_KEY = "AIzaSyBo3BoxdYoCBZNMKcIztJP_54KB-2zHtWM";
 
 export const FIREBASE_SDK = "https://www.gstatic.com/firebasejs/10.14.1";
 
