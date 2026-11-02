@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Géotrouveur – Administration</title>
+<style>
+  body { font-family: 'Segoe UI', sans-serif; max-width: 1000px; margin: 20px auto; padding: 0 15px; color: #333; }
+  h1 { margin-bottom: 4px; } h2 { border-bottom: 2px solid #1a73e8; padding-bottom: 4px; margin-top: 35px; }
+  textarea, select, input { font: inherit; padding: 8px; border: 1px solid #ccc; border-radius: 6px; }
+  textarea { width: 100%; box-sizing: border-box; height: 110px; }
+  button { padding: 8px 16px; border: none; border-radius: 6px; background: #1a73e8; color: #fff; cursor: pointer; font-weight: bold; }
+  button.rouge { background: #d93025; } button.gris { background: #777; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: .9em; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid #eee; text-align: left; }
+  .info { background: #e8f0fe; padding: 10px; border-radius: 8px; margin: 10px 0; }
+  .err { color: #d93025; } .cache { display: none; }
+</style>
+</head>
+<body>
+<h1>🔧 Administration – Géotrouveur</h1>
+
+<div id="vue-login">
+  <p>Connexion réservée à l'administrateur.</p>
+  <button id="btn-login">Se connecter avec Google</button>
+  <p id="msg-login" class="err"></p>
+</div>
+
+<div id="vue-admin" class="cache">
+  <p>Connecté : <b id="admin-mail"></b> <button class="gris" id="btn-logout">Déconnexion</button></p>
+
+  <h2>1. Créer des codes de classe</h2>
+  <div class="info">Une ligne par classe : <code>École;Classe;Enseignant (facultatif)</code><br>
+    Exemple : <code>Tramelan;9A;M. Dupont</code>. Un code du type <b>TRAM-9A-K7X</b> est généré automatiquement.</div>
+  <textarea id="txt-classes" placeholder="Tramelan;9A;M. Dupont&#10;Tramelan;9B"></textarea>
+  <p><button id="btn-creer">Créer les codes</button> <button class="gris" id="btn-csv">Copier le résultat</button></p>
+  <div id="res-creation"></div>
+
+  <h2>2. Classes existantes</h2>
+  <p><button class="gris" id="btn-liste-classes">Actualiser</button></p>
+  <table><thead><tr><th>Code</th><th>École</th><th>Classe</th><th>Enseignant</th><th>Active</th><th></th></tr></thead><tbody id="corps-classes"></tbody></table>
+
+  <h2>3. Joueurs et modération</h2>
+  <p>Semestre : <select id="sel-sem"></select> <button id="btn-joueurs">Afficher</button>
+     <button class="rouge" id="btn-reset-sem">Supprimer TOUT ce semestre</button></p>
+  <div id="info-joueurs"></div>
+  <table><thead><tr><th>Pseudo</th><th>École</th><th>Classe</th><th>Points</th><th>Lieux</th><th></th></tr></thead><tbody id="corps-joueurs"></tbody></table>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, getDocs, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { firebaseConfig, semestreCourant } from "./config.js";
+
+const app = initializeApp(firebaseConfig), auth = getAuth(app), db = getFirestore(app);
+const $ = id => document.getElementById(id);
+const esc = s => { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; };
+
+$('btn-login').onclick = async () => { try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { $('msg-login').textContent = e.message; } };
+$('btn-logout').onclick = () => signOut(auth);
+onAuthStateChanged(auth, u => {
+  const admin = u && !u.isAnonymous;
+  $('vue-login').classList.toggle('cache', !!admin);
+  $('vue-admin').classList.toggle('cache', !admin);
+  if (admin) { $('admin-mail').textContent = u.email; remplirSemestres(); listerClasses(); }
+});
+
+/* ---- Classes ---- */
+const sans = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function suffixe() { const a = new Uint8Array(3); crypto.getRandomValues(a); return [...a].map(x => ALPHA[x % ALPHA.length]).join(''); }
+let dernierCsv = '';
+
+$('btn-creer').onclick = async () => {
+  const lignes = $('txt-classes').value.split('\n').map(l => l.trim()).filter(Boolean);
+  const sortie = [['Code','École','Classe','Enseignant']];
+  for (const l of lignes) {
+    const [ecole, classe, ens] = l.split(';').map(x => (x || '').trim());
+    if (!ecole || !classe) { alert('Ligne ignorée : ' + l); continue; }
+    const code = `${sans(ecole).slice(0, 4)}-${sans(classe)}-${suffixe()}`;
+    await setDoc(doc(db, 'classes', code), { ecole, classe, enseignant: ens || '', actif: true, cree: serverTimestamp() });
+    sortie.push([code, ecole, classe, ens || '']);
+  }
+  dernierCsv = sortie.map(r => r.join(';')).join('\n');
+  $('res-creation').innerHTML = '<table>' + sortie.map((r, i) => '<tr>' + r.map(c => (i ? '<td>' : '<th>') + esc(c)).join('') + '</tr>').join('') + '</table>';
+  $('txt-classes').value = ''; listerClasses();
+};
+$('btn-csv').onclick = () => navigator.clipboard.writeText(dernierCsv);
+
+async function listerClasses() {
+  const snap = await getDocs(collection(db, 'classes'));
+  const corps = $('corps-classes'); corps.innerHTML = '';
+  snap.docs.sort((a, b) => a.id.localeCompare(b.id)).forEach(d => {
+    const c = d.data(); const tr = document.createElement('tr');
+    tr.innerHTML = `<td><b>${esc(d.id)}</b></td><td>${esc(c.ecole)}</td><td>${esc(c.classe)}</td><td>${esc(c.enseignant)}</td><td>${c.actif ? '✅' : '⛔'}</td><td></td>`;
+    const b1 = document.createElement('button'); b1.className = 'gris'; b1.textContent = c.actif ? 'Désactiver' : 'Activer';
+    b1.onclick = async () => { await updateDoc(doc(db, 'classes', d.id), { actif: !c.actif }); listerClasses(); };
+    const b2 = document.createElement('button'); b2.className = 'rouge'; b2.textContent = 'Supprimer'; b2.style.marginLeft = '6px';
+    b2.onclick = async () => { if (confirm('Supprimer le code ' + d.id + ' ?')) { await deleteDoc(doc(db, 'classes', d.id)); listerClasses(); } };
+    tr.lastChild.append(b1, b2); corps.appendChild(tr);
+  });
+}
+$('btn-liste-classes').onclick = listerClasses;
+
+/* ---- Joueurs ---- */
+function remplirSemestres() {
+  const sel = $('sel-sem'); sel.innerHTML = '';
+  let [y, s] = semestreCourant().split('-S').map(Number);
+  for (let i = 0; i < 6; i++) {
+    const o = document.createElement('option'); o.value = `${y}-S${s}`; o.textContent = o.value + (i === 0 ? ' (en cours)' : ''); sel.appendChild(o);
+    if (s === 1) { s = 2; } else { s = 1; y -= 1; }   // S2 (fév.-juil. N) précède S1 (août N - janv. N+1)
+  }
+}
+async function afficherJoueurs() {
+  const sem = $('sel-sem').value;
+  const snap = await getDocs(collection(db, 'semestres', sem, 'joueurs'));
+  $('info-joueurs').textContent = snap.size + ' joueur(s) pour ' + sem;
+  const corps = $('corps-joueurs'); corps.innerHTML = '';
+  snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.total - a.total).forEach(j => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(j.pseudo)}</td><td>${esc(j.ecole)}</td><td>${esc(j.classe)}</td><td>${j.total}</td><td>${j.n}</td><td></td>`;
+    const b = document.createElement('button'); b.className = 'rouge'; b.textContent = 'Supprimer';
+    b.onclick = async () => { if (confirm('Supprimer le joueur « ' + j.pseudo + ' » ?')) { await deleteDoc(doc(db, 'semestres', sem, 'joueurs', j.id)); afficherJoueurs(); } };
+    tr.lastChild.appendChild(b); corps.appendChild(tr);
+  });
+}
+$('btn-joueurs').onclick = afficherJoueurs;
+$('btn-reset-sem').onclick = async () => {
+  const sem = $('sel-sem').value;
+  if (prompt(`Cette action efface définitivement tous les joueurs et scores de ${sem}.\nTape SUPPRIMER pour confirmer.`) !== 'SUPPRIMER') return;
+  const snap = await getDocs(collection(db, 'semestres', sem, 'joueurs'));
+  for (let i = 0; i < snap.docs.length; i += 400) {
+    const b = writeBatch(db); snap.docs.slice(i, i + 400).forEach(d => b.delete(d.ref)); await b.commit();
+  }
+  afficherJoueurs();
+};
+</script>
+</body>
+</html>

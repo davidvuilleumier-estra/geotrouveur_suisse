@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Géotrouveur Suisse</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+<style>
+  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #000; margin: 0; padding: 10px; color: #333; }
+  .container { max-width: 950px; margin: auto; background: white; border-radius: 15px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1); position: relative; border: 1px solid #ddd; }
+  .tabs { display: flex; background: #f8f9fa; border-bottom: 2px solid #ddd; }
+  .tab-btn { flex: 1; padding: 15px 5px; border: none; background: none; cursor: pointer; font-weight: bold; color: #666; transition: 0.3s; font-size: 0.8em; }
+  .tab-btn.active { color: #1a73e8; border-bottom: 3px solid #1a73e8; background: white; }
+  .content { padding: 15px; display: none; }
+  .content.active { display: block; }
+  .sv-wrapper, .ref-container { position: relative; z-index: 1; width: 100%; margin-bottom: 10px; border-radius: 10px; overflow: hidden; border: 1px solid #ddd; background: #f8f8f8; transition: all 0.3s ease; }
+  .sv-wrapper { height: 380px; }
+  #street-view { width: 100%; height: 100%; }
+  .ref-container { height: 320px; display: flex; align-items: center; justify-content: center; }
+  #photoEnigme { max-width: 100%; max-height: 100%; object-fit: contain; transition: opacity 0.5s; }
+  .fullscreen-active { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; z-index: 5000 !important; border-radius: 0 !important; margin: 0 !important; background: black !important; }
+  .fs-toggle-btn { position: absolute; top: 10px; left: 10px; width: 32px; height: 32px; cursor: pointer; z-index: 5010; background: rgba(255,255,255,0.8); padding: 5px; border-radius: 6px; border: 1px solid #ccc; }
+  .label-info { background: #e8f0fe; color: #1967d2; padding: 10px 15px; font-size: 0.9em; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #1a73e8; font-weight: 500; }
+  .reset-notice { font-size: 0.8em; color: #d93025; font-style: italic; display: block; margin-top: 5px; }
+  .ui-bar { display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f8f9fa; border-radius: 10px; margin-bottom: 10px; border: 1px solid #eee; gap: 10px; }
+  #map, #mapHistorique { height: 400px; width: 100%; border-radius: 10px; border: 1px solid #ccc; }
+  button.action-btn { padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+  button.action-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-blue { background: #1a73e8; color: white; }
+  .btn-green { background: #34a853; color: white; display: none; }
+  #chrono { position: fixed; bottom: 20px; right: 20px; background: rgba(0,0,0,0.8); color: #fff; padding: 12px 24px; border-radius: 12px; font-size: 32px; font-family: monospace; font-weight: bold; z-index: 1000; }
+  #ecran-fin-temps, #ecran-victoire, #ecran-inscription, #ecran-chargement { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.97); z-index: 6000; display: none; justify-content: center; align-items: center; text-align: center; }
+  .carte-modale { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 25px rgba(0,0,0,.2); max-width: 420px; width: 90%; text-align: left; }
+  .carte-modale h2 { margin-top: 0; text-align: center; }
+  .carte-modale label { display: block; font-weight: bold; margin: 14px 0 4px; font-size: .9em; }
+  .carte-modale input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 1em; }
+  .carte-modale .petit { font-size: .8em; color: #666; margin-top: 6px; }
+  #msg-inscription { color: #d93025; font-size: .9em; margin-top: 10px; min-height: 1.2em; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+  tr.moi { background: #e8f0fe; font-weight: bold; }
+  .legende { display: flex; gap: 15px; margin-bottom: 10px; font-size: 0.85em; justify-content: center; flex-wrap: wrap; }
+  .dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; }
+  .scope { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 5px; }
+  .scope button { padding: 8px 14px; border: 1px solid #1a73e8; background: white; color: #1a73e8; border-radius: 20px; cursor: pointer; font-weight: bold; }
+  .scope button.on { background: #1a73e8; color: white; }
+  #sv-msg { display:none; height:100%; align-items:center; justify-content:center; color:#888; text-align:center; padding:20px; }
+</style>
+</head>
+<body>
+
+<div id="ecran-chargement" style="display:flex"><div>Chargement…</div></div>
+
+<div id="ecran-inscription">
+  <div class="carte-modale">
+    <h2>🌍 Bienvenue !</h2>
+    <label for="inp-code">Code de classe</label>
+    <input id="inp-code" autocomplete="off" autocapitalize="characters" placeholder="Fourni par ton enseignant·e">
+    <label for="inp-pseudo">Ton pseudo (3 à 16 caractères)</label>
+    <input id="inp-pseudo" autocomplete="off" maxlength="16" placeholder="Ex. : Aigle_rapide">
+    <div class="petit">N'utilise pas ton vrai nom. Les pseudos inappropriés sont supprimés par l'administrateur.<br>Aucune adresse e-mail n'est demandée. Les scores sont effacés à la fin de chaque semestre.</div>
+    <div id="msg-inscription"></div>
+    <div style="text-align:center;margin-top:10px"><button id="btn-inscription" class="action-btn btn-blue">C'est parti !</button></div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="tabs">
+    <button id="tab-standard" class="tab-btn active">🏠 JOUER</button>
+    <button id="tab-avance" class="tab-btn">🎯 AVANCÉ</button>
+    <button id="tab-histo" class="tab-btn">📍 MES LIEUX</button>
+    <button id="tab-classement" class="tab-btn">🏆 CLASSEMENT</button>
+  </div>
+
+  <div id="jeu" class="content active">
+    <div id="instruction-texte" class="label-info">Chargement...</div>
+    <div class="sv-wrapper" id="sv-wrapper">
+      <img id="fs-icon-sv" class="fs-toggle-btn" alt="Plein écran">
+      <div id="street-view"></div>
+      <div id="sv-msg">Pas de Street View disponible ici. Aide-toi de la photo !</div>
+    </div>
+    <div class="ref-container" id="main-ref-container">
+      <img id="fs-icon-photo" class="fs-toggle-btn" alt="Plein écran">
+      <img id="photoEnigme" src="" alt="Photo du lieu à trouver">
+    </div>
+    <div class="ui-bar">
+      <div id="result-text">Place ta punaise sur la carte.</div>
+      <button id="btnValider" class="action-btn btn-blue" disabled>Valider</button>
+      <button id="btnSuivant" class="action-btn btn-green">Lieu suivant ➔</button>
+    </div>
+    <div id="map"></div>
+  </div>
+
+  <div id="historique" class="content">
+    <h2 style="text-align:center">📍 Tes explorations</h2>
+    <div class="legende">
+      <span><span class="dot" style="background:#2ecc71"></span> Excellent (20 pts)</span>
+      <span><span class="dot" style="background:#f39c12"></span> Bon (10-15 pts)</span>
+      <span><span class="dot" style="background:#e74c3c"></span> Éloigné (&lt;10 pts)</span>
+    </div>
+    <div id="mapHistorique"></div>
+  </div>
+
+  <div id="classement" class="content">
+    <h2 style="text-align:center">🏆 Classement</h2>
+    <div class="scope">
+      <button data-scope="classe" class="on">Ma classe</button>
+      <button data-scope="ecole">Mon école</button>
+      <button data-scope="general">Top 25 général</button>
+    </div>
+    <div id="classement-info" style="text-align:center;font-size:.85em;color:#666"></div>
+    <table>
+      <thead><tr><th>Rang</th><th>Explorateur</th><th>Score</th><th>Précision</th><th>Lieux</th></tr></thead>
+      <tbody id="scoreBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="chrono">04:00</div>
+<div id="ecran-fin-temps"><button id="btn-temps" class="action-btn btn-blue">Temps écoulé ! Lieu suivant</button></div>
+<div id="ecran-victoire"><div style="background:white;padding:40px;border-radius:30px;"><h1 id="score-session-final">0</h1><p id="msg-victoire"></p><button id="btn-recommencer" class="action-btn btn-blue">Recommencer</button></div></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where, orderBy, limit, increment, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { firebaseConfig, GOOGLE_MAPS_KEY, semestreCourant, prochainReset, formatDate } from "./config.js";
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const SEM = semestreCourant();
+const $ = id => document.getElementById(id);
+
+const ICONE_AGRANDIR = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAoBAMAAAB+0KVeAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAOxAAADsQBlSsOGwAAABhQTFRFAAAAUFdfREREUFhf5ubmUFddUFZdT1ZcW69qkQAAAAh0Uk5TAP/////////VylQyAAAASElEQVR4nGNkVGRAB+8YjT5gCP5nVMIQY2AYWoJMCgz/HkBJAoJyYA6MpoogLXxEvCAtfER8eNLCR/QQDLqAIcbCyC6NIegHAPGRKbj9pnoDAAAAAElFTkSuQmCC";
+const ICONE_REDUIRE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAoBAMAAAB+0KVeAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAOxAAADsQBlSsOGwAAABtQTFRFAAAAUVhfREREUFdf5ubmUFddT1ZdT1ZcT1VcRuJIMwAAAAl0Uk5TAP//////////NwKb1AAAAEhJREFUeJxjZFRkQAd8jEICGIKMjEoYYkDRISbIJPcAjKknyKTA8O8BlMQvSBsfEStIijupH0q08BE9BIMuYIixMLJLYwjGAQDZuCbq2GzdOAAAAABJRU5ErkJggg==";
+
+let LIEUX = { standard: [], avance: [] };
+let joueur = null;          // données du joueur courant (semestre en cours)
+let joueurRef = null;
+let cible, map, mapH, panorama, guessMarker, histoMarkers = [], resultElements = [];
+let latGuess, lonGuess, scoreSession = 0, modeActuel = 'standard', intervalleChrono;
+let mapsPromise = null, scopeClassement = 'classe';
+
+/* ---------- Utilitaires ---------- */
+const cle = (mode, id) => (mode === 'avance' ? 'a_' : 's_') + id;
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function calculerDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371, dLat = (lat2-lat1)*Math.PI/180, dLon = (lon2-lon1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+function calculerPoints(distKm) {
+  const m = distKm * 1000;
+  if (m <= 10) return 20; if (m <= 200) return 15; if (m <= 500) return 10;
+  if (m <= 1000) return 7; if (m <= 10000) return 5; if (m <= 20000) return 1; return 0;
+}
+function chargerGoogleMaps() {
+  if (mapsPromise) return mapsPromise;
+  mapsPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_KEY}&v=quarterly`;
+    s.onload = resolve; s.onerror = reject;
+    document.head.appendChild(s);
+  });
+  return mapsPromise;
+}
+
+/* ---------- Filtre de pseudos (première barrière, l'administrateur modère le reste) ---------- */
+const MOTS_LONGS = ['merde','putain','salope','connard','connasse','encule','nazi','hitler','pute','nique','batard','pedophile','viol'];
+const MOTS_COURTS = ['fdp','ntm','pd','tg','con','cul','bite','sexe'];
+function normaliser(s) {
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/0/g,'o').replace(/1/g,'i').replace(/3/g,'e').replace(/4/g,'a').replace(/5/g,'s').replace(/[^a-z]/g,'');
+}
+function pseudoInterdit(p) { const n = normaliser(p); return MOTS_LONGS.some(w => n.includes(w)) || MOTS_COURTS.includes(n); }
+
+/* ---------- Démarrage / inscription ---------- */
+function attendreUtilisateur() {
+  return new Promise((resolve, reject) => {
+    const off = onAuthStateChanged(auth, u => {
+      if (u) { off(); resolve(u); }
+      else signInAnonymously(auth).catch(reject);
+    });
+  });
+}
+
+async function demarrer() {
+  try {
+    const [user, rep] = await Promise.all([attendreUtilisateur(), fetch('lieux.json').then(r => r.json())]);
+    LIEUX = rep;
+    joueurRef = doc(db, 'semestres', SEM, 'joueurs', user.uid);
+    const snap = await getDoc(joueurRef);
+    if (snap.exists()) { joueur = snap.data(); lancerJeu(); }
+    else montrerInscription();
+  } catch (e) {
+    console.error(e);
+    $('ecran-chargement').innerHTML = "<div>Impossible de se connecter au serveur.<br>Vérifie ta connexion puis recharge la page.</div>";
+  }
+}
+
+function montrerInscription() {
+  $('ecran-chargement').style.display = 'none';
+  $('ecran-inscription').style.display = 'flex';
+  const ancien = localStorage.getItem('gt_pseudo'); if (ancien) $('inp-pseudo').value = ancien;
+  const ancienCode = localStorage.getItem('gt_code'); if (ancienCode) $('inp-code').value = ancienCode;
+}
+
+async function inscrire() {
+  const msg = $('msg-inscription'); msg.textContent = '';
+  const code = $('inp-code').value.trim().toUpperCase();
+  const pseudo = $('inp-pseudo').value.trim();
+  if (!code) { msg.textContent = "Entre le code de classe."; return; }
+  if (pseudo.length < 3 || pseudo.length > 16) { msg.textContent = "Le pseudo doit avoir entre 3 et 16 caractères."; return; }
+  if (!/^[\p{L}\p{N}_\-. ']+$/u.test(pseudo)) { msg.textContent = "Caractères autorisés : lettres, chiffres, espace, _ - . '"; return; }
+  if (pseudoInterdit(pseudo)) { msg.textContent = "Ce pseudo n'est pas autorisé. Choisis-en un autre."; return; }
+  $('btn-inscription').disabled = true;
+  try {
+    const c = await getDoc(doc(db, 'classes', code));
+    if (!c.exists() || c.data().actif !== true) { msg.textContent = "Code de classe inconnu."; return; }
+    const data = { pseudo, classe: code, ecole: c.data().ecole, total: 0, n: 0, res: {}, cree: serverTimestamp() };
+    await setDoc(joueurRef, data);
+    localStorage.setItem('gt_pseudo', pseudo); localStorage.setItem('gt_code', code);
+    joueur = { ...data, cree: null };
+    $('ecran-inscription').style.display = 'none';
+    lancerJeu();
+  } catch (e) {
+    console.error(e); msg.textContent = "Erreur d'inscription. Réessaie.";
+  } finally { $('btn-inscription').disabled = false; }
+}
+
+function lancerJeu() {
+  $('ecran-chargement').style.display = 'none';
+  $('ecran-inscription').style.display = 'none';
+  initMaps();
+  nouveauLieu();
+}
+
+/* ---------- Cartes ---------- */
+function initMaps() {
+  $('fs-icon-photo').src = ICONE_AGRANDIR;
+  $('fs-icon-sv').src = ICONE_AGRANDIR;
+  const getPlan = () => L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg', { maxZoom: 19 });
+  const getSate = () => L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/{z}/{x}/{y}.jpeg', { maxZoom: 19 });
+  const planJeu = getPlan(), sateJeu = getSate();
+  map = L.map('map', { center: [46.8, 8.2], zoom: 7.5, layers: [planJeu] });
+  L.control.layers({ "🗺️ Carte": planJeu, "✈️ Vue aérienne": sateJeu }, null, { collapsed: false }).addTo(map);
+  const planH = getPlan(), sateH = getSate();
+  mapH = L.map('mapHistorique', { center: [46.8, 8.2], zoom: 7.5, layers: [planH] });
+  L.control.layers({ "🗺️ Carte": planH, "✈️ Vue aérienne": sateH }, null, { collapsed: false }).addTo(mapH);
+  map.on('click', e => {
+    if ($('btnValider').style.display === 'none') return;
+    latGuess = e.latlng.lat; lonGuess = e.latlng.lng;
+    if (guessMarker) guessMarker.setLatLng(e.latlng); else guessMarker = L.marker(e.latlng).addTo(map);
+    $('btnValider').disabled = false;
+  });
+}
+
+function toggleFS(idConteneur, idIcone) {
+  const c = $(idConteneur); const is = c.classList.toggle('fullscreen-active');
+  $(idIcone).src = is ? ICONE_REDUIRE : ICONE_AGRANDIR;
+  if (idConteneur === 'sv-wrapper' && panorama) setTimeout(() => google.maps.event.trigger(panorama, 'resize'), 200);
+}
+
+/* ---------- Onglets ---------- */
+function ouvrirOnglet(nom) {
+  document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+  $(nom).classList.add('active');
+  if (nom === 'jeu') setTimeout(() => map.invalidateSize(), 200);
+  if (nom === 'historique') setTimeout(() => mapH.invalidateSize(), 200);
+}
+function marquerOnglet(id) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  $(id).classList.add('active');
+}
+function changerMode(mode) {
+  modeActuel = mode;
+  marquerOnglet(mode === 'avance' ? 'tab-avance' : 'tab-standard');
+  ouvrirOnglet('jeu');
+  $('sv-wrapper').style.display = (mode === 'avance') ? 'none' : 'block';
+  recommencerPartie();
+}
+
+/* ---------- Jeu ---------- */
+function choisirLieu() {
+  const liste = LIEUX[modeActuel === 'avance' ? 'avance' : 'standard'];
+  const dispo = liste.filter(l => !(cle(modeActuel, l.id) in joueur.res));
+  if (!dispo.length) return null;
+  return dispo[Math.floor(Math.random() * dispo.length)];
+}
+
+function nouveauLieu() {
+  $('ecran-fin-temps').style.display = 'none';
+  $('btnValider').style.display = "inline-block"; $('btnValider').disabled = true;
+  $('btnSuivant').style.display = "none";
+  $('result-text').textContent = "Place ta punaise sur la carte.";
+  if (guessMarker) { map.removeLayer(guessMarker); guessMarker = null; }
+  resultElements.forEach(el => map.removeLayer(el)); resultElements = [];
+
+  const lieu = choisirLieu();
+  if (!lieu) {
+    clearInterval(intervalleChrono);
+    $('score-session-final').textContent = scoreSession + " points";
+    $('msg-victoire').textContent = "Tu as découvert tous les lieux de ce mode. Bravo !";
+    $('ecran-victoire').style.display = 'flex';
+    return;
+  }
+  cible = lieu;
+  $('photoEnigme').style.opacity = "0.2";
+  $('photoEnigme').onload = () => { $('photoEnigme').style.opacity = "1"; };
+  $('photoEnigme').onerror = () => { $('photoEnigme').style.opacity = "1"; $('result-text').textContent = "Photo introuvable, passe au lieu suivant."; };
+  $('photoEnigme').src = 'photos/' + lieu.photo;
+  $('instruction-texte').innerHTML =
+    `Explorateur : <b>${esc(joueur.pseudo)}</b> | Mode : ${modeActuel === 'avance' ? 'AVANCÉ' : 'STANDARD'}` +
+    `<span class="reset-notice">📅 Remise à zéro du classement le ${formatDate(prochainReset())}</span>`;
+  if (modeActuel === 'standard') rafraichirStreetView();
+  demarrerChrono();
+}
+
+async function validerEstimation() {
+  const btn = $('btnValider'), resText = $('result-text');
+  btn.disabled = true; btn.textContent = "Calcul...";
+  clearInterval(intervalleChrono);
+  const dist = calculerDistance(cible.lat, cible.lon, latGuess, lonGuess);
+  const pts = calculerPoints(dist);
+  const k = cle(modeActuel, cible.id);
+
+  const mCible = L.marker([cible.lat, cible.lon], { icon: L.icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', iconSize: [25,41], iconAnchor: [12,41] }) }).addTo(map);
+  const ligne = L.polyline([[cible.lat, cible.lon], [latGuess, lonGuess]], { color: '#d32f2f', weight: 3, dashArray: '5, 10' }).addTo(map);
+  resultElements.push(mCible, ligne);
+  map.fitBounds(new L.featureGroup([mCible, guessMarker]).getBounds().pad(0.3));
+
+  try {
+    if (k in joueur.res) {
+      resText.innerHTML = "<b>Déjà validé.</b>";
+    } else {
+      await updateDoc(joueurRef, { ['res.' + k]: pts, total: increment(pts), n: increment(1) });
+      joueur.res[k] = pts; joueur.total += pts; joueur.n += 1; scoreSession += pts;
+      resText.innerHTML = `Distance : <b>${dist.toFixed(2)} km</b> | <b>+${pts} pts</b>`;
+      if (pts === 20) confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
+    }
+  } catch (e) {
+    console.error(e);
+    resText.innerHTML = "<b>Score non enregistré</b> (erreur de connexion). Distance : " + dist.toFixed(2) + " km";
+  }
+  btn.style.display = "none"; btn.textContent = "Valider";
+  $('btnSuivant').style.display = "inline-block";
+}
+
+function recommencerPartie() { scoreSession = 0; $('ecran-victoire').style.display = 'none'; nouveauLieu(); }
+
+function demarrerChrono() {
+  clearInterval(intervalleChrono);
+  let t = 240; $('chrono').textContent = "04:00";
+  intervalleChrono = setInterval(() => {
+    t--; const m = Math.floor(t / 60), s = t % 60;
+    $('chrono').textContent = (m < 10 ? "0" + m : m) + ":" + (s < 10 ? "0" + s : s);
+    if (t <= 0) { clearInterval(intervalleChrono); $('ecran-fin-temps').style.display = 'flex'; }
+  }, 1000);
+}
+
+async function rafraichirStreetView() {
+  const svMsg = $('sv-msg'), svDiv = $('street-view');
+  svMsg.style.display = 'none'; svDiv.style.display = 'block';
+  try { await chargerGoogleMaps(); } catch (e) { svDiv.style.display = 'none'; svMsg.style.display = 'flex'; return; }
+  const pos = { lat: cible.lat, lng: cible.lon };
+  new google.maps.StreetViewService().getPanorama({ location: pos, radius: 50 }, (data, status) => {
+    if (status === google.maps.StreetViewStatus.OK) {
+      if (!panorama) panorama = new google.maps.StreetViewPanorama(svDiv, { addressControl: false, showRoadLabels: false, fullscreenControl: false });
+      panorama.setPano(data.location.pano); panorama.setVisible(true);
+    } else { svDiv.style.display = 'none'; svMsg.style.display = 'flex'; }
+  });
+}
+
+/* ---------- Historique ---------- */
+function chargerHistorique() {
+  histoMarkers.forEach(m => mapH.removeLayer(m)); histoMarkers = [];
+  const index = {};
+  LIEUX.standard.forEach(l => index['s_' + l.id] = l);
+  LIEUX.avance.forEach(l => index['a_' + l.id] = l);
+  Object.entries(joueur.res).forEach(([k, pts]) => {
+    const l = index[k]; if (!l) return;
+    const col = pts === 20 ? "green" : (pts >= 10 ? "orange" : "red");
+    const m = L.marker([l.lat, l.lon], { icon: L.icon({ iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${col}.png`, iconSize: [20, 32], iconAnchor: [10, 32] }) })
+      .addTo(mapH).bindPopup(`${esc(l.nom)} : ${pts} pts`);
+    histoMarkers.push(m);
+  });
+}
+
+/* ---------- Classement ---------- */
+async function chargerClassement() {
+  const corps = $('scoreBody'); corps.innerHTML = "<tr><td colspan='5'>Chargement…</td></tr>";
+  const base = collection(db, 'semestres', SEM, 'joueurs');
+  let q, info;
+  if (scopeClassement === 'classe') { q = query(base, where('classe', '==', joueur.classe)); info = "Ma classe"; }
+  else if (scopeClassement === 'ecole') { q = query(base, where('ecole', '==', joueur.ecole), limit(300)); info = "Mon école : " + joueur.ecole; }
+  else { q = query(base, orderBy('total', 'desc'), limit(25)); info = "Les 25 meilleurs joueurs"; }
+  $('classement-info').textContent = info + " — semestre " + SEM;
+  try {
+    const snap = await getDocs(q);
+    let liste = snap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(j => j.n > 0);
+    liste.sort((a, b) => b.total - a.total);
+    liste = liste.slice(0, 25);
+    const moi = auth.currentUser ? auth.currentUser.uid : null;
+    corps.innerHTML = '';
+    liste.forEach((j, i) => {
+      const b = i === 0 ? "🥇" : (i === 1 ? "🥈" : (i === 2 ? "🥉" : ""));
+      const prec = (j.total / (j.n * 20) * 100).toFixed(1);
+      const tr = document.createElement('tr'); if (j.uid === moi) tr.className = 'moi';
+      tr.innerHTML = `<td><b>${b} ${i + 1}</b></td><td>${esc(j.pseudo)}</td><td><b>${j.total} pts</b></td><td>${prec}%</td><td>${j.n}</td>`;
+      corps.appendChild(tr);
+    });
+    if (!liste.length) corps.innerHTML = "<tr><td colspan='5'>Aucun score pour l'instant.</td></tr>";
+  } catch (e) { console.error(e); corps.innerHTML = "<tr><td colspan='5'>Impossible de charger le classement.</td></tr>"; }
+}
+
+/* ---------- Événements ---------- */
+$('btn-inscription').addEventListener('click', inscrire);
+$('inp-pseudo').addEventListener('keydown', e => { if (e.key === 'Enter') inscrire(); });
+$('tab-standard').addEventListener('click', () => changerMode('standard'));
+$('tab-avance').addEventListener('click', () => changerMode('avance'));
+$('tab-histo').addEventListener('click', () => { marquerOnglet('tab-histo'); ouvrirOnglet('historique'); chargerHistorique(); });
+$('tab-classement').addEventListener('click', () => { marquerOnglet('tab-classement'); ouvrirOnglet('classement'); chargerClassement(); });
+document.querySelectorAll('.scope button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.scope button').forEach(x => x.classList.remove('on')); b.classList.add('on');
+  scopeClassement = b.dataset.scope; chargerClassement();
+}));
+$('btnValider').addEventListener('click', validerEstimation);
+$('btnSuivant').addEventListener('click', nouveauLieu);
+$('btn-temps').addEventListener('click', nouveauLieu);
+$('btn-recommencer').addEventListener('click', recommencerPartie);
+$('fs-icon-photo').addEventListener('click', () => toggleFS('main-ref-container', 'fs-icon-photo'));
+$('fs-icon-sv').addEventListener('click', () => toggleFS('sv-wrapper', 'fs-icon-sv'));
+
+demarrer();
+</script>
+</body>
+</html>
