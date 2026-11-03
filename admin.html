@@ -59,6 +59,13 @@
      <button class="rouge cache" id="btn-reset-sem">Supprimer TOUT ce semestre</button></p>
   <div id="info-joueurs"></div>
   <table><thead><tr><th>Pseudo</th><th>École</th><th>Classe</th><th>Points</th><th>Lieux</th><th></th></tr></thead><tbody id="corps-joueurs"></tbody></table>
+
+  <div id="bloc-photos" class="cache">
+    <h2>4. Contrôle des photos</h2>
+    <p>Vérifie que chaque lieu de <code>lieux.json</code> a bien sa photo dans le dossier <code>photos/</code> du site.</p>
+    <p><button id="btn-photos">Vérifier les photos</button> <span id="res-photos"></span></p>
+    <table><thead><tr><th>Mode</th><th>Lieu</th><th>Fichier manquant</th></tr></thead><tbody id="corps-photos"></tbody></table>
+  </div>
 </div>
 
 <script type="module">
@@ -90,6 +97,7 @@ onAuthStateChanged(auth, async u => {
   $('role').textContent = SUPER ? 'super-administrateur' : 'enseignant·e – ' + PROFIL.ecole;
   $('bloc-enseignants').classList.toggle('cache', !SUPER);
   $('btn-reset-sem').classList.toggle('cache', !SUPER);
+  $('bloc-photos').classList.toggle('cache', !SUPER);
   $('aide-classes').innerHTML = SUPER
     ? "Une ligne par classe : <code>École;Classe;Enseignant;Adresse de l'enseignant (facultatif)</code><br>Exemple : <code>Tramelan;9A;M. Dupont;prenom.nom@ecole.ch</code>. Renseignez l'adresse pour que l'enseignant puisse gérer cette classe."
     : "Une ligne par classe (ex. <code>9A</code>). Un code du type <b>" + (PROFIL.ecole || 'ECOL').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4) + "-9A-K7X</b> est généré pour chaque classe.";
@@ -213,6 +221,30 @@ async function afficherJoueurs() {
   });
 }
 $('btn-joueurs').onclick = afficherJoueurs;
+
+/* ---- Contrôle des photos ---- */
+$('btn-photos').onclick = async () => {
+  const res = $('res-photos'), corps = $('corps-photos'); corps.innerHTML = '';
+  res.textContent = 'Chargement…';
+  const L = await (await fetch('lieux.json', { cache: 'no-store' })).json();
+  const tous = [...L.standard.map(l => ({ ...l, mode: 'Standard' })), ...L.avance.map(l => ({ ...l, mode: 'Avancé' }))];
+  const manquantes = []; let i = 0, fait = 0;
+  async function ouvrier() {
+    while (i < tous.length) {
+      const l = tous[i++];
+      try { const r = await fetch('photos/' + l.photo, { method: 'HEAD', cache: 'no-store' }); if (!r.ok) manquantes.push(l); }
+      catch (e) { manquantes.push(l); }
+      fait++; res.textContent = `Vérification… ${fait}/${tous.length}`;
+    }
+  }
+  await Promise.all(Array.from({ length: 6 }, ouvrier));
+  res.textContent = manquantes.length ? `${manquantes.length} photo(s) manquante(s) sur ${tous.length}.` : `Toutes les photos sont présentes (${tous.length}).`;
+  manquantes.forEach(l => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(l.mode)}</td><td>${esc(l.nom)}</td><td>${esc(l.photo)}</td>`;
+    corps.appendChild(tr);
+  });
+};
 $('btn-reset-sem').onclick = async () => {
   if (!SUPER) return;
   const sem = $('sel-sem').value;

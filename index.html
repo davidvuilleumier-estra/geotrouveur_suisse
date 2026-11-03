@@ -150,6 +150,7 @@ let joueurRef = null;
 let cible, map, mapH, panorama, guessMarker, histoMarkers = [], resultElements = [];
 let latGuess, lonGuess, scoreSession = 0, modeActuel = 'standard', intervalleChrono;
 let mapsPromise = null, scopeClassement = 'classe';
+let echecsPhoto = new Set(), echecsConsecutifs = 0;   // photos introuvables (session en cours)
 
 /* ---------- Utilitaires ---------- */
 const cle = (mode, id) => (mode === 'avance' ? 'a_' : 's_') + id;
@@ -293,7 +294,7 @@ function changerMode(mode) {
 /* ---------- Jeu ---------- */
 function choisirLieu() {
   const liste = LIEUX[modeActuel === 'avance' ? 'avance' : 'standard'];
-  const dispo = liste.filter(l => !(cle(modeActuel, l.id) in joueur.res));
+  const dispo = liste.filter(l => !(cle(modeActuel, l.id) in joueur.res) && !echecsPhoto.has(cle(modeActuel, l.id)));
   if (!dispo.length) return null;
   return dispo[Math.floor(Math.random() * dispo.length)];
 }
@@ -310,15 +311,34 @@ function nouveauLieu() {
   if (!lieu) {
     clearInterval(intervalleChrono);
     $('score-session-final').textContent = scoreSession + " points";
-    $('msg-victoire').textContent = "Tu as découvert tous les lieux de ce mode. Bravo !";
+    const liste = LIEUX[modeActuel === 'avance' ? 'avance' : 'standard'];
+    const restants = liste.filter(l => !(cle(modeActuel, l.id) in joueur.res)).length;
+    $('msg-victoire').textContent = restants > 0
+      ? "Il reste " + restants + " lieu(x), mais leur photo est indisponible pour le moment. Reviens plus tard !"
+      : "Tu as découvert tous les lieux de ce mode. Bravo !";
     $('ecran-victoire').style.display = 'flex';
     return;
   }
   cible = lieu;
-  $('photoEnigme').style.opacity = "0.2";
-  $('photoEnigme').onload = () => { $('photoEnigme').style.opacity = "1"; };
-  $('photoEnigme').onerror = () => { $('photoEnigme').style.opacity = "1"; $('result-text').textContent = "Photo introuvable, passe au lieu suivant."; };
-  $('photoEnigme').src = 'photos/' + lieu.photo;
+  const img = $('photoEnigme');
+  let essai = 0;
+  img.style.opacity = "0.2";
+  img.onload = () => { img.style.opacity = "1"; echecsConsecutifs = 0; };
+  img.onerror = () => {
+    if (cible !== lieu) return;                       // réponse d'un ancien lieu : on ignore
+    if (essai++ === 0) { img.src = 'photos/' + lieu.photo + '?r=' + Date.now(); return; }   // 1 nouvel essai
+    console.warn('Photo introuvable :', lieu.photo);
+    echecsPhoto.add(cle(modeActuel, lieu.id));
+    echecsConsecutifs++;
+    if (echecsConsecutifs >= 5) {
+      clearInterval(intervalleChrono);
+      $('result-text').textContent = "Les photos ne se chargent pas. Vérifie ta connexion puis recharge la page.";
+      return;
+    }
+    $('result-text').textContent = "Photo indisponible, un autre lieu est choisi…";
+    setTimeout(() => { if (cible === lieu) nouveauLieu(); }, 600);
+  };
+  img.src = 'photos/' + lieu.photo;
   $('instruction-texte').innerHTML =
     `Explorateur : <b>${esc(joueur.pseudo)}</b> | Mode : ${modeActuel === 'avance' ? 'AVANCÉ' : 'STANDARD'}` +
     `<span class="reset-notice">📅 Remise à zéro du classement le ${formatDate(prochainReset())}</span>`;
