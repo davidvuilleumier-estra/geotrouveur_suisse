@@ -134,7 +134,8 @@ import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, getDocs, quer
   from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { firebaseConfig, GOOGLE_MAPS_KEY, semestreCourant, prochainReset, formatDate } from "./config.js";
 
-const app = initializeApp(firebaseConfig);
+// Instance nommée : la session des joueurs (anonyme) reste séparée de celle de l'administration (Google)
+const app = initializeApp(firebaseConfig, 'joueur');
 const auth = getAuth(app);
 const db = getFirestore(app);
 const SEM = semestreCourant();
