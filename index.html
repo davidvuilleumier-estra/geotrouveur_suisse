@@ -417,25 +417,42 @@ function chargerHistorique() {
 }
 
 /* ---------- Classement ---------- */
+/* Regroupe les fiches d'un même élève (même classe + même pseudo, ex. plusieurs appareils).
+   Pour chaque lieu on garde le meilleur résultat : jamais de points comptés deux fois. */
+function fusionner(fiches, moi) {
+  const groupes = new Map();
+  fiches.forEach(f => {
+    const k = f.classe + '|' + String(f.pseudo).trim().toLowerCase();
+    let g = groupes.get(k);
+    if (!g) { g = { pseudo: f.pseudo, classe: f.classe, res: {}, moi: false }; groupes.set(k, g); }
+    Object.entries(f.res || {}).forEach(([lieu, pts]) => { if (!(lieu in g.res) || pts > g.res[lieu]) g.res[lieu] = pts; });
+    if (f.uid === moi) g.moi = true;
+  });
+  return [...groupes.values()].map(g => {
+    const vals = Object.values(g.res);
+    return { ...g, total: vals.reduce((a, b) => a + b, 0), n: vals.length };
+  });
+}
+
 async function chargerClassement() {
   const corps = $('scoreBody'); corps.innerHTML = "<tr><td colspan='5'>Chargement…</td></tr>";
   const base = collection(db, 'semestres', SEM, 'joueurs');
   let q, info;
   if (scopeClassement === 'classe') { q = query(base, where('classe', '==', joueur.classe)); info = "Ma classe"; }
   else if (scopeClassement === 'ecole') { q = query(base, where('ecole', '==', joueur.ecole), limit(300)); info = "Mon école : " + joueur.ecole; }
-  else { q = query(base, orderBy('total', 'desc'), limit(25)); info = "Les 25 meilleurs joueurs"; }
+  else { q = query(base, orderBy('total', 'desc'), limit(150)); info = "Les 25 meilleurs joueurs"; }
   $('classement-info').textContent = info + " — semestre " + SEM;
   try {
     const snap = await getDocs(q);
-    let liste = snap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(j => j.n > 0);
+    const moi = auth.currentUser ? auth.currentUser.uid : null;
+    let liste = fusionner(snap.docs.map(d => ({ uid: d.id, ...d.data() })), moi).filter(j => j.n > 0);
     liste.sort((a, b) => b.total - a.total);
     liste = liste.slice(0, 25);
-    const moi = auth.currentUser ? auth.currentUser.uid : null;
     corps.innerHTML = '';
     liste.forEach((j, i) => {
       const b = i === 0 ? "🥇" : (i === 1 ? "🥈" : (i === 2 ? "🥉" : ""));
       const prec = (j.total / (j.n * 20) * 100).toFixed(1);
-      const tr = document.createElement('tr'); if (j.uid === moi) tr.className = 'moi';
+      const tr = document.createElement('tr'); if (j.moi) tr.className = 'moi';
       tr.innerHTML = `<td><b>${b} ${i + 1}</b></td><td>${esc(j.pseudo)}</td><td><b>${j.total} pts</b></td><td>${prec}%</td><td>${j.n}</td>`;
       corps.appendChild(tr);
     });
