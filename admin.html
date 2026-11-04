@@ -206,15 +206,30 @@ async function afficherJoueurs() {
   let docs = [];
   if (SUPER) docs = (await getDocs(base)).docs;
   else for (const c of mesClasses) docs.push(...(await getDocs(query(base, where('classe', '==', c.id)))).docs);
-  $('info-joueurs').textContent = docs.length + ' joueur(s) pour ' + sem;
+
+  // Regroupe les fiches d'un même élève (même classe + même pseudo) ; meilleur résultat par lieu, sans double comptage
+  const groupes = new Map();
+  docs.forEach(d => {
+    const f = d.data(); const k = f.classe + '|' + String(f.pseudo).trim().toLowerCase();
+    let g = groupes.get(k);
+    if (!g) { g = { pseudo: f.pseudo, ecole: f.ecole, classe: f.classe, res: {}, ids: [] }; groupes.set(k, g); }
+    Object.entries(f.res || {}).forEach(([l, p]) => { if (!(l in g.res) || p > g.res[l]) g.res[l] = p; });
+    g.ids.push(d.id);
+  });
+  const liste = [...groupes.values()].map(g => {
+    const v = Object.values(g.res); return { ...g, total: v.reduce((a, b) => a + b, 0), n: v.length };
+  }).sort((a, b) => b.total - a.total);
+
+  $('info-joueurs').textContent = liste.length + ' joueur(s) (' + docs.length + ' fiche(s)) pour ' + sem;
   const corps = $('corps-joueurs'); corps.innerHTML = '';
-  docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.total - a.total).forEach(j => {
+  liste.forEach(j => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${esc(j.pseudo)}</td><td>${esc(j.ecole)}</td><td>${esc(j.classe)}</td><td>${j.total}</td><td>${j.n}</td><td></td>`;
+    tr.innerHTML = `<td>${esc(j.pseudo)}${j.ids.length > 1 ? ' <small>(' + j.ids.length + ' fiches)</small>' : ''}</td><td>${esc(j.ecole)}</td><td>${esc(j.classe)}</td><td>${j.total}</td><td>${j.n}</td><td></td>`;
     const b = document.createElement('button'); b.className = 'rouge'; b.textContent = 'Supprimer';
     b.onclick = async () => {
-      if (!confirm('Supprimer le joueur « ' + j.pseudo + ' » ?')) return;
-      try { await deleteDoc(doc(db, 'semestres', sem, 'joueurs', j.id)); } catch (e) { alert('Suppression refusée : ' + e.message); }
+      if (!confirm('Supprimer « ' + j.pseudo + ' »' + (j.ids.length > 1 ? ' et ses ' + j.ids.length + ' fiches' : '') + ' ?')) return;
+      try { for (const id of j.ids) await deleteDoc(doc(db, 'semestres', sem, 'joueurs', id)); }
+      catch (e) { alert('Suppression refusée : ' + e.message); }
       afficherJoueurs();
     };
     tr.lastChild.appendChild(b); corps.appendChild(tr);
