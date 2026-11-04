@@ -37,6 +37,12 @@
   .carte-modale label { display: block; font-weight: bold; margin: 14px 0 4px; font-size: .9em; }
   .carte-modale input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 1em; }
   .carte-modale .petit { font-size: .8em; color: #666; margin-top: 6px; }
+  /* Image de fond de la page d'accueil (fichier fond_accueil.webp à la racine du site) */
+  #ecran-inscription {
+    background: #1b2a3a url('fond_accueil.webp') center / cover no-repeat;
+    overflow-y: auto; padding: 15px; box-sizing: border-box;
+  }
+  #ecran-inscription .carte-modale { background: rgba(255,255,255,0.95); margin: auto; }
   .mode-auth { display: flex; gap: 6px; margin-bottom: 6px; }
   .mode-auth button { flex: 1; padding: 9px 6px; border: 1px solid #1a73e8; background: white; color: #1a73e8; border-radius: 8px; cursor: pointer; font-weight: bold; }
   .mode-auth button.on { background: #1a73e8; color: white; }
