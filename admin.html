@@ -58,7 +58,7 @@
   <p>Semestre : <select id="sel-sem"></select> <button id="btn-joueurs">Afficher</button>
      <button class="rouge cache" id="btn-reset-sem">Supprimer TOUT ce semestre</button></p>
   <div id="info-joueurs"></div>
-  <table><thead><tr><th>Pseudo</th><th>École</th><th>Classe</th><th>Points</th><th>Lieux</th><th></th></tr></thead><tbody id="corps-joueurs"></tbody></table>
+  <table><thead><tr><th>Pseudo</th><th>École</th><th>Classe</th><th>Points</th><th>Lieux</th><th>Identifiant</th><th></th></tr></thead><tbody id="corps-joueurs"></tbody></table>
 
   <div id="bloc-photos" class="cache">
     <h2>4. Contrôle des photos</h2>
@@ -224,7 +224,7 @@ async function afficherJoueurs() {
   const corps = $('corps-joueurs'); corps.innerHTML = '';
   liste.forEach(j => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${esc(j.pseudo)}${j.ids.length > 1 ? ' <small>(' + j.ids.length + ' fiches)</small>' : ''}</td><td>${esc(j.ecole)}</td><td>${esc(j.classe)}</td><td>${j.total}</td><td>${j.n}</td><td></td>`;
+    tr.innerHTML = `<td>${esc(j.pseudo)}${j.ids.length > 1 ? ' <small>(' + j.ids.length + ' fiches)</small>' : ''}</td><td>${esc(j.ecole)}</td><td>${esc(j.classe)}</td><td>${j.total}</td><td>${j.n}</td><td><small>${esc(j.ids[0])}</small></td><td></td>`;
     const b = document.createElement('button'); b.className = 'rouge'; b.textContent = 'Supprimer';
     b.onclick = async () => {
       if (!confirm('Supprimer « ' + j.pseudo + ' »' + (j.ids.length > 1 ? ' et ses ' + j.ids.length + ' fiches' : '') + ' ?')) return;

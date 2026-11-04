@@ -37,6 +37,9 @@
   .carte-modale label { display: block; font-weight: bold; margin: 14px 0 4px; font-size: .9em; }
   .carte-modale input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 1em; }
   .carte-modale .petit { font-size: .8em; color: #666; margin-top: 6px; }
+  .mode-auth { display: flex; gap: 6px; margin-bottom: 6px; }
+  .mode-auth button { flex: 1; padding: 9px 6px; border: 1px solid #1a73e8; background: white; color: #1a73e8; border-radius: 8px; cursor: pointer; font-weight: bold; }
+  .mode-auth button.on { background: #1a73e8; color: white; }
   #msg-inscription { color: #d93025; font-size: .9em; margin-top: 10px; min-height: 1.2em; }
   table { width: 100%; border-collapse: collapse; margin-top: 12px; }
   th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
@@ -59,14 +62,21 @@
 
 <div id="ecran-inscription">
   <div class="carte-modale">
-    <h2>🌍 Bienvenue !</h2>
+    <h2>🌍 Géotrouveur</h2>
+    <div class="mode-auth">
+      <button id="mode-creer" class="on" type="button">Première fois</button>
+      <button id="mode-connexion" type="button">J'ai déjà un compte</button>
+    </div>
     <label for="inp-code">Code de classe</label>
     <input id="inp-code" autocomplete="off" autocapitalize="characters" placeholder="Fourni par ton enseignant·e">
     <label for="inp-pseudo">Ton pseudo (3 à 16 caractères)</label>
     <input id="inp-pseudo" autocomplete="off" maxlength="16" placeholder="Ex. : Aigle_rapide">
-    <div class="petit">N'utilise pas ton vrai nom. Les pseudos inappropriés sont supprimés par l'administrateur.<br>Aucune adresse e-mail n'est demandée. Les scores sont effacés à la fin de chaque semestre.</div>
+    <label for="inp-mdp">Ton code secret</label>
+    <input id="inp-mdp" type="password" autocomplete="off" maxlength="12">
+    <div class="petit" id="aide-mdp"></div>
+    <div class="petit">N'utilise pas ton vrai nom. Aucune adresse e-mail n'est demandée. Les pseudos inappropriés sont supprimés. Les scores sont effacés à la fin de chaque semestre.</div>
     <div id="msg-inscription"></div>
-    <div style="text-align:center;margin-top:10px"><button id="btn-inscription" class="action-btn btn-blue">C'est parti !</button></div>
+    <div style="text-align:center;margin-top:10px"><button id="btn-inscription" class="action-btn btn-blue">Créer mon compte</button></div>
   </div>
 </div>
 
@@ -76,6 +86,7 @@
     <button id="tab-avance" class="tab-btn">🎯 AVANCÉ</button>
     <button id="tab-histo" class="tab-btn">📍 MES LIEUX</button>
     <button id="tab-classement" class="tab-btn">🏆 CLASSEMENT</button>
+    <button id="tab-quitter" class="tab-btn" style="flex:0 0 90px">🚪 Quitter</button>
   </div>
 
   <div id="jeu" class="content active">
@@ -129,14 +140,16 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { initializeAuth, browserSessionPersistence, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut }
+  from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where, orderBy, limit, increment, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { firebaseConfig, GOOGLE_MAPS_KEY, semestreCourant, prochainReset, formatDate } from "./config.js";
 
 // Instance nommée : la session des joueurs (anonyme) reste séparée de celle de l'administration (Google)
 const app = initializeApp(firebaseConfig, 'joueur');
-const auth = getAuth(app);
+// Session conservée seulement tant que l'onglet est ouvert (ordinateurs partagés)
+const auth = initializeAuth(app, { persistence: browserSessionPersistence });
 const db = getFirestore(app);
 const SEM = semestreCourant();
 const $ = id => document.getElementById(id);
@@ -185,58 +198,116 @@ function normaliser(s) {
 }
 function pseudoInterdit(p) { const n = normaliser(p); return MOTS_LONGS.some(w => n.includes(w)) || MOTS_COURTS.includes(n); }
 
-/* ---------- Démarrage / inscription ---------- */
-function attendreUtilisateur() {
-  return new Promise((resolve, reject) => {
-    const off = onAuthStateChanged(auth, u => {
-      if (u) { off(); resolve(u); }
-      else signInAnonymously(auth).catch(reject);
-    });
-  });
+/* ---------- Connexion : code de classe + pseudo + code secret ---------- */
+const DOMAINE = '@joueurs.geotrouveur.ch';   // adresse technique fictive, jamais utilisée pour écrire à quelqu'un
+let modeAuth = 'creer';
+
+// Identifiant illisible dérivé de la classe et du pseudo (aucune donnée personnelle)
+async function empreinte(code, pseudo) {
+  const txt = code.trim().toUpperCase() + '|' + pseudo.normalize('NFC').trim().toLowerCase();
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(txt));
+  return [...new Uint8Array(buf)].slice(0, 10).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function attendreEtat() {
+  return new Promise(resolve => { const off = onAuthStateChanged(auth, u => { off(); resolve(u); }); });
 }
 
 async function demarrer() {
   try {
-    const [user, rep] = await Promise.all([attendreUtilisateur(), fetch('lieux.json').then(r => r.json())]);
-    LIEUX = rep;
-    joueurRef = doc(db, 'semestres', SEM, 'joueurs', user.uid);
-    const snap = await getDoc(joueurRef);
-    if (snap.exists()) { joueur = snap.data(); lancerJeu(); }
-    else montrerInscription();
+    LIEUX = await fetch('lieux.json').then(r => r.json());
+    const u = await attendreEtat();
+    if (u && u.email && u.email.endsWith(DOMAINE)) {
+      if (await ouvrirFiche(u.email.split('@')[0])) return;
+      await signOut(auth);
+      montrerConnexion("Nouveau semestre : reconnecte-toi.", 'connexion');
+      return;
+    }
+    montrerConnexion();
   } catch (e) {
     console.error(e);
     $('ecran-chargement').innerHTML = "<div>Impossible de se connecter au serveur.<br>Vérifie ta connexion puis recharge la page.</div>";
   }
 }
 
-function montrerInscription() {
-  $('ecran-chargement').style.display = 'none';
-  $('ecran-inscription').style.display = 'flex';
-  const ancien = localStorage.getItem('gt_pseudo'); if (ancien) $('inp-pseudo').value = ancien;
-  const ancienCode = localStorage.getItem('gt_code'); if (ancienCode) $('inp-code').value = ancienCode;
+async function ouvrirFiche(hid) {
+  joueurRef = doc(db, 'semestres', SEM, 'joueurs', hid);
+  const snap = await getDoc(joueurRef);
+  if (!snap.exists()) return false;
+  joueur = snap.data(); lancerJeu(); return true;
 }
 
-async function inscrire() {
+function montrerConnexion(msg, mode) {
+  $('ecran-chargement').style.display = 'none';
+  $('ecran-inscription').style.display = 'flex';
+  choisirMode(mode || 'creer');
+  $('msg-inscription').textContent = msg || '';
+}
+
+function choisirMode(m) {
+  modeAuth = m;
+  $('mode-creer').classList.toggle('on', m === 'creer');
+  $('mode-connexion').classList.toggle('on', m === 'connexion');
+  $('btn-inscription').textContent = m === 'creer' ? "Créer mon compte" : "Me connecter";
+  $('aide-mdp').textContent = m === 'creer'
+    ? "Choisis un code secret : 2 lettres puis 4 chiffres (ex. : ab1234). Retiens-le et ne le partage pas."
+    : "Entre le code secret que tu as choisi à ta première visite.";
+  $('inp-mdp').value = ''; $('msg-inscription').textContent = '';
+}
+
+function messageErreur(e) {
+  switch (e.code || e.message) {
+    case 'auth/email-already-in-use': return "Ce pseudo existe déjà dans cette classe. Si c'est toi, clique sur « J'ai déjà un compte ». Sinon, choisis un autre pseudo.";
+    case 'auth/invalid-credential': case 'auth/wrong-password': case 'auth/user-not-found': case 'auth/invalid-login-credentials':
+      return "Code de classe, pseudo ou code secret incorrect.";
+    case 'auth/too-many-requests': return "Trop d'essais. Attends quelques minutes avant de réessayer.";
+    case 'auth/network-request-failed': return "Pas de connexion. Réessaie.";
+    case 'classe': return "Code de classe inconnu ou désactivé.";
+    default: console.error(e); return "Erreur de connexion. Réessaie.";
+  }
+}
+
+async function chargerOuCreerFiche(hid, code, pseudo) {
+  joueurRef = doc(db, 'semestres', SEM, 'joueurs', hid);
+  const snap = await getDoc(joueurRef);
+  if (snap.exists()) { joueur = snap.data(); }
+  else {
+    const c = await getDoc(doc(db, 'classes', code));
+    if (!c.exists() || c.data().actif !== true) throw new Error('classe');
+    const data = { pseudo, classe: code, ecole: c.data().ecole, total: 0, n: 0, res: {}, cree: serverTimestamp() };
+    await setDoc(joueurRef, data);
+    joueur = { ...data, cree: null };
+  }
+  $('ecran-inscription').style.display = 'none';
+  lancerJeu();
+}
+
+async function valider() {
   const msg = $('msg-inscription'); msg.textContent = '';
   const code = $('inp-code').value.trim().toUpperCase();
   const pseudo = $('inp-pseudo').value.trim();
+  const mdp = $('inp-mdp').value.trim().toLowerCase();
   if (!code) { msg.textContent = "Entre le code de classe."; return; }
   if (pseudo.length < 3 || pseudo.length > 16) { msg.textContent = "Le pseudo doit avoir entre 3 et 16 caractères."; return; }
   if (!/^[\p{L}\p{N}_\-. ']+$/u.test(pseudo)) { msg.textContent = "Caractères autorisés : lettres, chiffres, espace, _ - . '"; return; }
   if (pseudoInterdit(pseudo)) { msg.textContent = "Ce pseudo n'est pas autorisé. Choisis-en un autre."; return; }
+  if (modeAuth === 'creer' && !/^[a-z]{2}[0-9]{4}$/.test(mdp)) { msg.textContent = "Le code secret doit contenir 2 lettres puis 4 chiffres (ex. : ab1234)."; return; }
+  if (modeAuth === 'connexion' && !mdp) { msg.textContent = "Entre ton code secret."; return; }
   $('btn-inscription').disabled = true;
   try {
-    const c = await getDoc(doc(db, 'classes', code));
-    if (!c.exists() || c.data().actif !== true) { msg.textContent = "Code de classe inconnu."; return; }
-    const data = { pseudo, classe: code, ecole: c.data().ecole, total: 0, n: 0, res: {}, cree: serverTimestamp() };
-    await setDoc(joueurRef, data);
-    localStorage.setItem('gt_pseudo', pseudo); localStorage.setItem('gt_code', code);
-    joueur = { ...data, cree: null };
-    $('ecran-inscription').style.display = 'none';
-    lancerJeu();
-  } catch (e) {
-    console.error(e); msg.textContent = "Erreur d'inscription. Réessaie.";
-  } finally { $('btn-inscription').disabled = false; }
+    const hid = await empreinte(code, pseudo);
+    const email = hid + DOMAINE;
+    if (modeAuth === 'creer') {
+      const cred = await createUserWithEmailAndPassword(auth, email, mdp);
+      try { await chargerOuCreerFiche(hid, code, pseudo); }
+      catch (e) { if (e.message === 'classe') await cred.user.delete().catch(() => {}); throw e; }
+    } else {
+      await signInWithEmailAndPassword(auth, email, mdp);
+      try { await chargerOuCreerFiche(hid, code, pseudo); }
+      catch (e) { await signOut(auth); throw e; }
+    }
+  } catch (e) { msg.textContent = messageErreur(e); }
+  finally { $('btn-inscription').disabled = false; }
 }
 
 function lancerJeu() {
@@ -444,7 +515,7 @@ async function chargerClassement() {
   $('classement-info').textContent = info + " — semestre " + SEM;
   try {
     const snap = await getDocs(q);
-    const moi = auth.currentUser ? auth.currentUser.uid : null;
+    const moi = joueurRef.id;
     let liste = fusionner(snap.docs.map(d => ({ uid: d.id, ...d.data() })), moi).filter(j => j.n > 0);
     liste.sort((a, b) => b.total - a.total);
     liste = liste.slice(0, 25);
@@ -461,8 +532,11 @@ async function chargerClassement() {
 }
 
 /* ---------- Événements ---------- */
-$('btn-inscription').addEventListener('click', inscrire);
-$('inp-pseudo').addEventListener('keydown', e => { if (e.key === 'Enter') inscrire(); });
+$('btn-inscription').addEventListener('click', valider);
+$('inp-mdp').addEventListener('keydown', e => { if (e.key === 'Enter') valider(); });
+$('mode-creer').addEventListener('click', () => choisirMode('creer'));
+$('mode-connexion').addEventListener('click', () => choisirMode('connexion'));
+$('tab-quitter').addEventListener('click', () => { if (confirm("Te déconnecter ?")) signOut(auth).finally(() => location.reload()); });
 $('tab-standard').addEventListener('click', () => changerMode('standard'));
 $('tab-avance').addEventListener('click', () => changerMode('avance'));
 $('tab-histo').addEventListener('click', () => { marquerOnglet('tab-histo'); ouvrirOnglet('historique'); chargerHistorique(); });
