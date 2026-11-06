@@ -55,8 +55,11 @@
   <table><thead><tr><th>Code</th><th>École</th><th>Classe</th><th>Enseignant</th><th>Active</th><th></th></tr></thead><tbody id="corps-classes"></tbody></table>
 
   <h2>3. Joueurs et modération</h2>
-  <p>Semestre : <select id="sel-sem"></select> <button id="btn-joueurs">Afficher</button>
+  <p>Semestre : <select id="sel-sem"></select>
+     Classe : <select id="sel-classe"><option value="">Toutes les classes</option></select>
+     <button id="btn-joueurs">Afficher</button>
      <button class="rouge cache" id="btn-reset-sem">Supprimer TOUT ce semestre</button></p>
+  <p><input id="filtre-pseudo" type="search" placeholder="Rechercher un pseudo…" style="min-width:240px"></p>
   <div id="info-joueurs"></div>
   <table><thead><tr><th>Pseudo</th><th>École</th><th>Classe</th><th>Points</th><th>Lieux</th><th>Identifiant</th><th></th></tr></thead><tbody id="corps-joueurs"></tbody></table>
 
@@ -160,6 +163,7 @@ async function listerClasses() {
   const ref = collection(db, 'classes');
   const snap = await getDocs(SUPER ? ref : query(ref, where('proprio', '==', MAIL)));
   mesClasses = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.id.localeCompare(b.id));
+  remplirFiltreClasses();
   const corps = $('corps-classes'); corps.innerHTML = '';
   mesClasses.forEach(c => {
     const tr = document.createElement('tr');
@@ -172,6 +176,16 @@ async function listerClasses() {
   });
 }
 $('btn-liste-classes').onclick = listerClasses;
+
+function remplirFiltreClasses() {
+  const sel = $('sel-classe'), courant = sel.value;
+  sel.innerHTML = '';
+  const tout = document.createElement('option'); tout.value = ''; tout.textContent = SUPER ? 'Toutes les classes' : 'Toutes mes classes'; sel.appendChild(tout);
+  mesClasses.slice().sort((a, b) => (a.ecole + a.classe).localeCompare(b.ecole + b.classe)).forEach(c => {
+    const o = document.createElement('option'); o.value = c.id; o.textContent = `${c.ecole} – ${c.classe}`; sel.appendChild(o);
+  });
+  if ([...sel.options].some(o => o.value === courant)) sel.value = courant;
+}
 
 async function supprimerDocs(refs) {
   const taille = SUPER ? 400 : 15;   // limite des lectures de règles pour les enseignants
@@ -201,10 +215,14 @@ function remplirSemestres() {
   const sel = $('sel-sem'); sel.innerHTML = '';
   listeSemestres().forEach((v, i) => { const o = document.createElement('option'); o.value = v; o.textContent = v + (i === 0 ? ' (en cours)' : ''); sel.appendChild(o); });
 }
+let joueursCharges = [], semCharge = '', nbFiches = 0;
+
 async function afficherJoueurs() {
   const sem = $('sel-sem').value, base = collection(db, 'semestres', sem, 'joueurs');
+  const codeClasse = $('sel-classe').value;
   let docs = [];
-  if (SUPER) docs = (await getDocs(base)).docs;
+  if (codeClasse) docs = (await getDocs(query(base, where('classe', '==', codeClasse)))).docs;   // une seule classe : moins de lectures
+  else if (SUPER) docs = (await getDocs(base)).docs;
   else for (const c of mesClasses) docs.push(...(await getDocs(query(base, where('classe', '==', c.id)))).docs);
 
   // Regroupe les fiches d'un même élève (même classe + même pseudo) ; meilleur résultat par lieu, sans double comptage
@@ -216,11 +234,21 @@ async function afficherJoueurs() {
     Object.entries(f.res || {}).forEach(([l, p]) => { if (!(l in g.res) || p > g.res[l]) g.res[l] = p; });
     g.ids.push(d.id);
   });
-  const liste = [...groupes.values()].map(g => {
+  joueursCharges = [...groupes.values()].map(g => {
     const v = Object.values(g.res); return { ...g, total: v.reduce((a, b) => a + b, 0), n: v.length };
   }).sort((a, b) => b.total - a.total);
+  semCharge = sem; nbFiches = docs.length;
+  dessinerJoueurs();
+}
 
-  $('info-joueurs').textContent = liste.length + ' joueur(s) (' + docs.length + ' fiche(s)) pour ' + sem;
+function dessinerJoueurs() {
+  const sem = semCharge, filtre = $('filtre-pseudo').value.trim().toLowerCase();
+  const liste = joueursCharges.filter(j => !filtre || String(j.pseudo).toLowerCase().includes(filtre));
+  const choix = $('sel-classe').selectedOptions[0];
+  $('info-joueurs').textContent = liste.length + ' joueur(s)'
+    + (filtre ? ' correspondant à la recherche (sur ' + joueursCharges.length + ')' : '')
+    + (nbFiches !== joueursCharges.length ? ' – ' + nbFiches + ' fiche(s)' : '')
+    + ' – ' + (choix && choix.value ? choix.textContent : 'toutes les classes') + ' – ' + sem;
   const corps = $('corps-joueurs'); corps.innerHTML = '';
   liste.forEach(j => {
     const tr = document.createElement('tr');
@@ -235,6 +263,9 @@ async function afficherJoueurs() {
     tr.lastChild.appendChild(b); corps.appendChild(tr);
   });
 }
+$('filtre-pseudo').addEventListener('input', dessinerJoueurs);
+$('sel-classe').addEventListener('change', afficherJoueurs);
+$('sel-sem').addEventListener('change', afficherJoueurs);
 $('btn-joueurs').onclick = afficherJoueurs;
 
 /* ---- Contrôle des photos ---- */
