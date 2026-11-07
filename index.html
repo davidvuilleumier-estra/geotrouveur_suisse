@@ -327,8 +327,9 @@ function lancerJeu() {
 function initMaps() {
   $('fs-icon-photo').src = ICONE_AGRANDIR;
   $('fs-icon-sv').src = ICONE_AGRANDIR;
-  const getPlan = () => L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg', { maxZoom: 19 });
-  const getSate = () => L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/{z}/{x}/{y}.jpeg', { maxZoom: 19 });
+  const ATTRIBUTION = 'Données cartographiques : © swisstopo';
+  const getPlan = () => L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg', { maxZoom: 19, attribution: ATTRIBUTION });
+  const getSate = () => L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/{z}/{x}/{y}.jpeg', { maxZoom: 19, attribution: ATTRIBUTION });
   const planJeu = getPlan(), sateJeu = getSate();
   map = L.map('map', { center: [46.8, 8.2], zoom: 7.5, layers: [planJeu] });
   L.control.layers({ "🗺️ Carte": planJeu, "✈️ Vue aérienne": sateJeu }, null, { collapsed: false }).addTo(map);
