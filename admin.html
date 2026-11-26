@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>Géotrouveur – Administration</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   body { font-family: 'Segoe UI', sans-serif; max-width: 1000px; margin: 20px auto; padding: 0 15px; color: #333; }
   h1 { margin-bottom: 4px; } h2 { border-bottom: 2px solid #1a73e8; padding-bottom: 4px; margin-top: 35px; }
@@ -69,12 +71,34 @@
     <p><button id="btn-photos">Vérifier les photos</button> <span id="res-photos"></span></p>
     <table><thead><tr><th>Mode</th><th>Lieu</th><th>Fichier manquant</th></tr></thead><tbody id="corps-photos"></tbody></table>
   </div>
+
+  <div id="bloc-coord" class="cache">
+    <h2>5. Contrôle des coordonnées</h2>
+    <div class="info">Choisissez un lieu dans la liste ou cliquez sur un point de la carte : la punaise <b>rouge</b> devient déplaçable (glissez-la, ou saisissez les coordonnées). Les points <b>bleus</b> ont déjà été corrigés. Une correction s'applique <b>immédiatement dans le jeu</b>, sans toucher aux fichiers.</div>
+    <p>Mode : <select id="coord-mode"><option value="standard">Standard</option><option value="avance">Avancé</option></select>
+       <input id="coord-filtre" type="search" placeholder="Filtrer par nom…" style="min-width:220px">
+       <button id="btn-coord-charger">Charger / actualiser</button>
+       <button class="gris" id="btn-coord-export">Télécharger lieux.json corrigé</button></p>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <select id="coord-liste" size="14" style="flex:1;min-width:260px"></select>
+      <div style="flex:1;min-width:280px">
+        <b id="coord-nom">Aucun lieu sélectionné</b>
+        <div><img id="coord-photo" alt="" style="max-width:100%;max-height:200px;margin:6px 0;display:none"></div>
+        <p>Latitude <input id="coord-lat" size="11"> Longitude <input id="coord-lon" size="11"></p>
+        <p id="coord-info" style="font-size:.85em;color:#555"></p>
+        <p><button id="btn-coord-save">Enregistrer la correction</button>
+           <button class="gris" id="btn-coord-reset">Revenir à l'original</button></p>
+        <p style="font-size:.85em"><a id="lien-sv" target="_blank" rel="noopener">Ouvrir dans Google Street View</a></p>
+      </div>
+    </div>
+    <div id="coord-map" style="height:520px;margin-top:10px;border-radius:8px;border:1px solid #ccc"></div>
+  </div>
 </div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, query, where, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, query, where, writeBatch, serverTimestamp, deleteField } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { firebaseConfig, semestreCourant, ADMIN_EMAIL } from "./config.js";
 
 const app = initializeApp(firebaseConfig), auth = getAuth(app), db = getFirestore(app);
@@ -101,6 +125,7 @@ onAuthStateChanged(auth, async u => {
   $('bloc-enseignants').classList.toggle('cache', !SUPER);
   $('btn-reset-sem').classList.toggle('cache', !SUPER);
   $('bloc-photos').classList.toggle('cache', !SUPER);
+  $('bloc-coord').classList.toggle('cache', !SUPER);
   $('aide-classes').innerHTML = SUPER
     ? "Une ligne par classe : <code>École;Classe;Enseignant;Adresse de l'enseignant (facultatif)</code><br>Exemple : <code>Tramelan;9A;M. Dupont;prenom.nom@ecole.ch</code>. Renseignez l'adresse pour que l'enseignant puisse gérer cette classe."
     : "Une ligne par classe (ex. <code>9A</code>). Un code du type <b>" + (PROFIL.ecole || 'ECOL').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4) + "-9A-K7X</b> est généré pour chaque classe.";
@@ -298,6 +323,110 @@ $('btn-reset-sem').onclick = async () => {
   const snap = await getDocs(collection(db, 'semestres', sem, 'joueurs'));
   await supprimerDocs(snap.docs.map(d => d.ref));
   afficherJoueurs();
+};
+
+/* ---- Contrôle des coordonnées ---- */
+const refCorr = doc(db, 'config', 'corrections');
+let LIEUX_ADM = null, CORR = {}, carteC = null, groupeC = null, mSel = null, lieuSel = null;
+const cleLieu = (mode, id) => (mode === 'avance' ? 'a_' : 's_') + id;
+const modeC = () => $('coord-mode').value;
+const coordEff = (mode, l) => CORR[cleLieu(mode, l.id)] || { lat: l.lat, lon: l.lon };
+function distM(a, b, c, d) {
+  const R = 6371000, r = x => x * Math.PI / 180, dl = r(c - a), dn = r(d - b);
+  const h = Math.sin(dl / 2) ** 2 + Math.cos(r(a)) * Math.cos(r(c)) * Math.sin(dn / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+async function chargerOutilCoord() {
+  $('coord-info').textContent = 'Chargement…';
+  LIEUX_ADM = await (await fetch('lieux.json', { cache: 'no-store' })).json();
+  const s = await getDoc(refCorr); CORR = s.exists() ? s.data() : {};
+  if (!carteC) {
+    const attr = 'Données cartographiques : © swisstopo';
+    const plan = L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg', { maxZoom: 19, attribution: attr });
+    const aerien = L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/{z}/{x}/{y}.jpeg', { maxZoom: 19, attribution: attr });
+    carteC = L.map('coord-map', { center: [46.8, 8.2], zoom: 8, layers: [plan] });
+    L.control.layers({ '🗺️ Carte': plan, '✈️ Vue aérienne': aerien }, null, { collapsed: false }).addTo(carteC);
+    groupeC = L.layerGroup().addTo(carteC);
+  }
+  $('coord-info').textContent = '';
+  dessinerCoord();
+}
+
+function dessinerCoord() {
+  if (!LIEUX_ADM) return;
+  const mode = modeC(), filtre = $('coord-filtre').value.trim().toLowerCase();
+  const liste = LIEUX_ADM[mode].filter(l => !filtre || l.nom.toLowerCase().includes(filtre));
+  const sel = $('coord-liste'); sel.innerHTML = '';
+  liste.forEach(l => {
+    const o = document.createElement('option'); o.value = l.id;
+    o.textContent = (CORR[cleLieu(mode, l.id)] ? '✏️ ' : '') + l.nom; sel.appendChild(o);
+  });
+  if (lieuSel && lieuSel.mode === mode) sel.value = lieuSel.l.id;
+  groupeC.clearLayers();
+  liste.forEach(l => {
+    const c = coordEff(mode, l), corrige = !!CORR[cleLieu(mode, l.id)];
+    L.circleMarker([c.lat, c.lon], { radius: 5, color: corrige ? '#1a73e8' : '#555', fillColor: corrige ? '#1a73e8' : '#999', fillOpacity: .8, weight: 1 })
+      .bindTooltip(l.nom).on('click', () => choisirLieuCoord(l)).addTo(groupeC);
+  });
+}
+
+function choisirLieuCoord(l) {
+  const mode = modeC(); lieuSel = { mode, l };
+  const c = coordEff(mode, l);
+  $('coord-nom').textContent = l.nom;
+  const ph = $('coord-photo'); ph.src = 'photos/' + l.photo; ph.style.display = 'inline-block';
+  $('coord-lat').value = c.lat.toFixed(6); $('coord-lon').value = c.lon.toFixed(6);
+  if (mSel) carteC.removeLayer(mSel);
+  mSel = L.marker([c.lat, c.lon], { draggable: true, icon: L.icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', iconSize: [25, 41], iconAnchor: [12, 41] }), zIndexOffset: 1000 }).addTo(carteC);
+  mSel.on('drag dragend', () => { const p = mSel.getLatLng(); $('coord-lat').value = p.lat.toFixed(6); $('coord-lon').value = p.lng.toFixed(6); majInfoCoord(); });
+  carteC.setView([c.lat, c.lon], 17);
+  $('coord-liste').value = l.id;
+  majInfoCoord();
+}
+
+function majInfoCoord() {
+  if (!lieuSel) return;
+  const { mode, l } = lieuSel, lat = parseFloat($('coord-lat').value), lon = parseFloat($('coord-lon').value);
+  if (isNaN(lat) || isNaN(lon)) { $('coord-info').textContent = 'Coordonnées invalides.'; return; }
+  const ecart = distM(l.lat, l.lon, lat, lon);
+  $('coord-info').textContent = (CORR[cleLieu(mode, l.id)] ? 'Lieu déjà corrigé. ' : '') + 'Écart avec l\'original : ' + Math.round(ecart) + ' m.';
+  $('lien-sv').href = `https://www.google.com/maps?q=&layer=c&cbll=${lat},${lon}`;
+}
+
+$('btn-coord-charger').onclick = chargerOutilCoord;
+$('coord-mode').addEventListener('change', () => { lieuSel = null; if (mSel && carteC) { carteC.removeLayer(mSel); mSel = null; } dessinerCoord(); });
+$('coord-filtre').addEventListener('input', dessinerCoord);
+$('coord-liste').addEventListener('change', e => { const l = LIEUX_ADM[modeC()].find(x => String(x.id) === e.target.value); if (l) choisirLieuCoord(l); });
+['coord-lat', 'coord-lon'].forEach(id => $(id).addEventListener('change', () => {
+  const lat = parseFloat($('coord-lat').value), lon = parseFloat($('coord-lon').value);
+  if (mSel && !isNaN(lat) && !isNaN(lon)) { mSel.setLatLng([lat, lon]); carteC.panTo([lat, lon]); }
+  majInfoCoord();
+}));
+
+$('btn-coord-save').onclick = async () => {
+  if (!lieuSel) return;
+  const lat = parseFloat($('coord-lat').value), lon = parseFloat($('coord-lon').value);
+  if (isNaN(lat) || isNaN(lon) || lat < 45.7 || lat > 48 || lon < 5.9 || lon > 10.6) { alert('Coordonnées invalides ou hors de Suisse.'); return; }
+  const k = cleLieu(lieuSel.mode, lieuSel.l.id), val = { lat: +lat.toFixed(6), lon: +lon.toFixed(6) };
+  try { await setDoc(refCorr, { [k]: val }, { merge: true }); CORR[k] = val; majInfoCoord(); dessinerCoord(); $('coord-info').textContent += ' ✅ Enregistré.'; }
+  catch (e) { alert('Enregistrement refusé : ' + e.message); }
+};
+$('btn-coord-reset').onclick = async () => {
+  if (!lieuSel) return;
+  const k = cleLieu(lieuSel.mode, lieuSel.l.id);
+  if (!CORR[k]) { choisirLieuCoord(lieuSel.l); return; }
+  try { await setDoc(refCorr, { [k]: deleteField() }, { merge: true }); delete CORR[k]; dessinerCoord(); choisirLieuCoord(lieuSel.l); }
+  catch (e) { alert('Opération refusée : ' + e.message); }
+};
+
+$('btn-coord-export').onclick = async () => {
+  if (!LIEUX_ADM) await chargerOutilCoord();
+  const out = {};
+  for (const mode of ['standard', 'avance']) out[mode] = LIEUX_ADM[mode].map(l => { const c = coordEff(mode, l); return { ...l, lat: c.lat, lon: c.lon }; });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+  a.download = 'lieux.json'; a.click();
 };
 </script>
 </body>

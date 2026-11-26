@@ -316,9 +316,23 @@ async function valider() {
   finally { $('btn-inscription').disabled = false; }
 }
 
-function lancerJeu() {
+// Coordonnées corrigées par l'administrateur (un seul document, une seule lecture par session)
+async function chargerCorrections() {
+  try {
+    const s = await getDoc(doc(db, 'config', 'corrections'));
+    if (!s.exists()) return;
+    const c = s.data();
+    ['standard', 'avance'].forEach(mode => LIEUX[mode].forEach(l => {
+      const k = cle(mode, l.id);
+      if (c[k] && typeof c[k].lat === 'number' && typeof c[k].lon === 'number') { l.lat = c[k].lat; l.lon = c[k].lon; }
+    }));
+  } catch (e) { console.warn('Corrections indisponibles', e); }
+}
+
+async function lancerJeu() {
   $('ecran-chargement').style.display = 'none';
   $('ecran-inscription').style.display = 'none';
+  await chargerCorrections();
   initMaps();
   nouveauLieu();
 }
